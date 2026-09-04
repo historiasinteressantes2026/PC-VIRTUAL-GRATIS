@@ -1,0 +1,678 @@
+```python
+import os
+import sys
+import shutil
+import subprocess
+import platform
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
+
+APP_NAME = "Virtual Gamer PC"
+DEFAULT_RAM = 8192
+DEFAULT_CPU = 6
+DEFAULT_DISK = 80
+DEFAULT_VM_NAME = "GamerPC"
+
+
+class VirtualGamerPC:
+    def __init__(self, root):
+        self.root = root
+        self.root.title(APP_NAME)
+        self.root.geometry("900x650")
+        self.root.minsize(800, 580)
+
+        self.qemu = ""
+        self.iso_path = ""
+        self.disk_path = os.path.abspath("GamerPC.qcow2")
+        self.process = None
+
+        self.ram_var = tk.StringVar(value=str(DEFAULT_RAM))
+        self.cpu_var = tk.StringVar(value=str(DEFAULT_CPU))
+        self.disk_var = tk.StringVar(value=str(DEFAULT_DISK))
+        self.iso_var = tk.StringVar(value="Nenhuma ISO selecionada")
+        self.fullscreen_var = tk.BooleanVar(value=False)
+        self.acceleration_var = tk.BooleanVar(value=True)
+
+        self.build_interface()
+        self.detect_qemu()
+        self.update_hardware_info()
+
+    # ---------------------------------------------------------
+    # INTERFACE
+    # ---------------------------------------------------------
+
+    def build_interface(self):
+        title = tk.Label(
+            self.root,
+            text="VIRTUAL GAMER PC",
+            font=("Segoe UI", 28, "bold")
+        )
+        title.pack(pady=(20, 5))
+
+        subtitle = tk.Label(
+            self.root,
+            text="Máquina virtual de alto desempenho",
+            font=("Segoe UI", 11)
+        )
+        subtitle.pack()
+
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True, padx=20, pady=20)
+
+        config_tab = ttk.Frame(notebook)
+        hardware_tab = ttk.Frame(notebook)
+        about_tab = ttk.Frame(notebook)
+
+        notebook.add(config_tab, text="Configuração")
+        notebook.add(hardware_tab, text="Hardware")
+        notebook.add(about_tab, text="Informações")
+
+        self.create_config_tab(config_tab)
+        self.create_hardware_tab(hardware_tab)
+        self.create_about_tab(about_tab)
+
+        bottom = ttk.Frame(self.root)
+        bottom.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.status_label = ttk.Label(
+            bottom,
+            text="Pronto.",
+            font=("Segoe UI", 10)
+        )
+        self.status_label.pack(side="left")
+
+        self.start_button = ttk.Button(
+            bottom,
+            text="INICIAR PC VIRTUAL",
+            command=self.start_vm
+        )
+        self.start_button.pack(side="right")
+
+    def create_config_tab(self, parent):
+        frame = ttk.LabelFrame(
+            parent,
+            text="Perfil Gamer"
+        )
+        frame.pack(fill="x", padx=20, pady=20)
+
+        ttk.Label(
+            frame,
+            text="Memória RAM (MB):"
+        ).grid(row=0, column=0, padx=15, pady=12, sticky="w")
+
+        ttk.Entry(
+            frame,
+            textvariable=self.ram_var,
+            width=15
+        ).grid(row=0, column=1, padx=15, pady=12)
+
+        ttk.Label(
+            frame,
+            text="Núcleos da CPU:"
+        ).grid(row=1, column=0, padx=15, pady=12, sticky="w")
+
+        ttk.Entry(
+            frame,
+            textvariable=self.cpu_var,
+            width=15
+        ).grid(row=1, column=1, padx=15, pady=12)
+
+        ttk.Label(
+            frame,
+            text="Disco virtual (GB):"
+        ).grid(row=2, column=0, padx=15, pady=12, sticky="w")
+
+        ttk.Entry(
+            frame,
+            textvariable=self.disk_var,
+            width=15
+        ).grid(row=2, column=1, padx=15, pady=12)
+
+        ttk.Checkbutton(
+            frame,
+            text="Usar aceleração de hardware",
+            variable=self.acceleration_var
+        ).grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            padx=15,
+            pady=12,
+            sticky="w"
+        )
+
+        ttk.Checkbutton(
+            frame,
+            text="Iniciar em tela cheia",
+            variable=self.fullscreen_var
+        ).grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            padx=15,
+            pady=12,
+            sticky="w"
+        )
+
+        iso_frame = ttk.LabelFrame(
+            parent,
+            text="Sistema operacional"
+        )
+        iso_frame.pack(fill="x", padx=20, pady=10)
+
+        ttk.Label(
+            iso_frame,
+            textvariable=self.iso_var
+        ).pack(
+            side="left",
+            padx=15,
+            pady=15,
+            fill="x",
+            expand=True
+        )
+
+        ttk.Button(
+            iso_frame,
+            text="Selecionar ISO",
+            command=self.select_iso
+        ).pack(
+            side="right",
+            padx=15,
+            pady=15
+        )
+
+        disk_frame = ttk.LabelFrame(
+            parent,
+            text="Disco virtual"
+        )
+        disk_frame.pack(fill="x", padx=20, pady=10)
+
+        self.disk_label = ttk.Label(
+            disk_frame,
+            text=self.disk_path
+        )
+        self.disk_label.pack(
+            side="left",
+            padx=15,
+            pady=15
+        )
+
+        ttk.Button(
+            disk_frame,
+            text="Criar disco",
+            command=self.create_disk
+        ).pack(
+            side="right",
+            padx=15,
+            pady=15
+        )
+
+    def create_hardware_tab(self, parent):
+        self.hardware_text = tk.Text(
+            parent,
+            height=20,
+            width=80,
+            font=("Consolas", 11)
+        )
+        self.hardware_text.pack(
+            fill="both",
+            expand=True,
+            padx=20,
+            pady=20
+        )
+
+        ttk.Button(
+            parent,
+            text="Atualizar informações",
+            command=self.update_hardware_info
+        ).pack(pady=(0, 20))
+
+    def create_about_tab(self, parent):
+        text = (
+            "VIRTUAL GAMER PC\n\n"
+            "Launcher de máquina virtual baseado em QEMU.\n\n"
+            "O programa permite configurar:\n"
+            "• CPU virtual\n"
+            "• Memória RAM\n"
+            "• Disco virtual QCOW2\n"
+            "• ISO do sistema operacional\n"
+            "• Aceleração de hardware\n"
+            "• Tela cheia\n"
+            "• Rede virtual\n"
+            "• Áudio virtual\n"
+            "• USB e mouse/tablet\n\n"
+            "Este programa é um launcher/configurador.\n"
+            "O mecanismo de virtualização é fornecido pelo QEMU.\n"
+        )
+
+        label = ttk.Label(
+            parent,
+            text=text,
+            justify="left",
+            font=("Segoe UI", 12)
+        )
+        label.pack(
+            padx=40,
+            pady=40,
+            anchor="w"
+        )
+
+    # ---------------------------------------------------------
+    # HARDWARE
+    # ---------------------------------------------------------
+
+    def update_hardware_info(self):
+        if not hasattr(self, "hardware_text"):
+            return
+
+        self.hardware_text.delete("1.0", tk.END)
+
+        cpu = os.cpu_count() or 1
+        system = platform.system()
+        release = platform.release()
+        machine = platform.machine()
+
+        info = [
+            "=== HARDWARE DO COMPUTADOR HOST ===",
+            "",
+            f"Sistema: {system}",
+            f"Versão: {release}",
+            f"Arquitetura: {machine}",
+            f"CPUs lógicas detectadas: {cpu}",
+            "",
+            "=== PERFIL VIRTUAL ===",
+            "",
+            f"RAM configurada: {self.ram_var.get()} MB",
+            f"CPU configurada: {self.cpu_var.get()} núcleos",
+            f"Disco configurado: {self.disk_var.get()} GB",
+            "",
+            "=== QEMU ===",
+            "",
+            f"Executável: {self.qemu or 'Não encontrado'}"
+        ]
+
+        self.hardware_text.insert(
+            tk.END,
+            "\n".join(info)
+        )
+
+    # ---------------------------------------------------------
+    # QEMU
+    # ---------------------------------------------------------
+
+    def detect_qemu(self):
+        candidates = [
+            "qemu-system-x86_64.exe",
+            "qemu-system-x86_64"
+        ]
+
+        for candidate in candidates:
+            path = shutil.which(candidate)
+
+            if path:
+                self.qemu = path
+                return
+
+        possible_paths = [
+            r"C:\Program Files\qemu\qemu-system-x86_64.exe",
+            r"C:\Program Files\QEMU\qemu-system-x86_64.exe",
+            r"C:\Program Files (x86)\qemu\qemu-system-x86_64.exe"
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.qemu = path
+                return
+
+    # ---------------------------------------------------------
+    # ISO
+    # ---------------------------------------------------------
+
+    def select_iso(self):
+        path = filedialog.askopenfilename(
+            title="Selecionar ISO",
+            filetypes=[
+                ("Imagem ISO", "*.iso"),
+                ("Todos os arquivos", "*.*")
+            ]
+        )
+
+        if not path:
+            return
+
+        self.iso_path = os.path.abspath(path)
+
+        self.iso_var.set(
+            os.path.basename(self.iso_path)
+        )
+
+        self.status_label.config(
+            text="ISO selecionada."
+        )
+
+    # ---------------------------------------------------------
+    # DISCO
+    # ---------------------------------------------------------
+
+    def create_disk(self):
+        if not self.qemu:
+            messagebox.showerror(
+                "QEMU não encontrado",
+                "Instale o QEMU e adicione-o ao PATH."
+            )
+            return
+
+        try:
+            size = int(self.disk_var.get())
+
+            if size < 10:
+                raise ValueError
+
+        except ValueError:
+            messagebox.showerror(
+                "Valor inválido",
+                "O disco precisa ter pelo menos 10 GB."
+            )
+            return
+
+        output = filedialog.asksaveasfilename(
+            title="Salvar disco virtual",
+            defaultextension=".qcow2",
+            initialfile="GamerPC.qcow2",
+            filetypes=[
+                ("QEMU QCOW2", "*.qcow2")
+            ]
+        )
+
+        if not output:
+            return
+
+        command = [
+            self.get_qemu_img(),
+            "create",
+            "-f",
+            "qcow2",
+            output,
+            f"{size}G"
+        ]
+
+        try:
+            subprocess.run(
+                command,
+                check=True
+            )
+
+            self.disk_path = os.path.abspath(output)
+            self.disk_label.config(
+                text=self.disk_path
+            )
+
+            messagebox.showinfo(
+                "Sucesso",
+                "Disco virtual criado."
+            )
+
+        except Exception as error:
+            messagebox.showerror(
+                "Erro",
+                f"Não foi possível criar o disco:\n{error}"
+            )
+
+    def get_qemu_img(self):
+        img = shutil.which("qemu-img")
+
+        if img:
+            return img
+
+        if self.qemu:
+            folder = os.path.dirname(self.qemu)
+
+            possible = os.path.join(
+                folder,
+                "qemu-img.exe"
+            )
+
+            if os.path.exists(possible):
+                return possible
+
+        return "qemu-img"
+
+    # ---------------------------------------------------------
+    # VALIDAÇÃO
+    # ---------------------------------------------------------
+
+    def validate_config(self):
+        try:
+            ram = int(self.ram_var.get())
+            cpu = int(self.cpu_var.get())
+            disk = int(self.disk_var.get())
+        except ValueError:
+            messagebox.showerror(
+                "Configuração inválida",
+                "RAM, CPU e disco precisam ser números."
+            )
+            return None
+
+        host_cpu = os.cpu_count() or 1
+
+        if ram < 2048:
+            messagebox.showerror(
+                "RAM insuficiente",
+                "Use pelo menos 2048 MB."
+            )
+            return None
+
+        if cpu < 1 or cpu > host_cpu:
+            messagebox.showerror(
+                "CPU inválida",
+                f"Escolha entre 1 e {host_cpu} núcleos."
+            )
+            return None
+
+        if disk < 10:
+            messagebox.showerror(
+                "Disco inválido",
+                "O disco precisa ter pelo menos 10 GB."
+            )
+            return None
+
+        if not os.path.exists(self.disk_path):
+            messagebox.showwarning(
+                "Disco não encontrado",
+                "Crie ou selecione um disco virtual antes de iniciar."
+            )
+            return None
+
+        return ram, cpu, disk
+
+    # ---------------------------------------------------------
+    # MONTAGEM DO QEMU
+    # ---------------------------------------------------------
+
+    def build_command(self):
+        config = self.validate_config()
+
+        if not config:
+            return None
+
+        ram, cpu, _ = config
+
+        command = [
+            self.qemu,
+            "-name",
+            DEFAULT_VM_NAME,
+            "-machine",
+            "q35",
+            "-smp",
+            str(cpu),
+            "-m",
+            str(ram),
+            "-drive",
+            f"file={self.disk_path},if=virtio,format=qcow2",
+            "-device",
+            "virtio-net-pci,netdev=net0",
+            "-netdev",
+            "user,id=net0",
+            "-device",
+            "ich9-intel-hda",
+            "-device",
+            "hda-duplex",
+            "-device",
+            "usb-tablet",
+            "-device",
+            "virtio-vga",
+            "-display",
+            "default"
+        ]
+
+        if self.acceleration_var.get():
+            if platform.system() == "Windows":
+                command.extend([
+                    "-accel",
+                    "whpx"
+                ])
+            else:
+                command.extend([
+                    "-accel",
+                    "tcg"
+                ])
+
+        if self.iso_path:
+            command.extend([
+                "-cdrom",
+                self.iso_path
+            ])
+
+        if self.fullscreen_var.get():
+            command.extend([
+                "-full-screen"
+            ])
+
+        return command
+
+    # ---------------------------------------------------------
+    # INICIAR VM
+    # ---------------------------------------------------------
+
+    def start_vm(self):
+        if self.process and self.process.poll() is None:
+            messagebox.showinfo(
+                "Virtual PC",
+                "A máquina virtual já está funcionando."
+            )
+            return
+
+        if not self.qemu:
+            messagebox.showerror(
+                "QEMU não encontrado",
+                "Instale o QEMU antes de iniciar a máquina virtual."
+            )
+            return
+
+        command = self.build_command()
+
+        if not command:
+            return
+
+        self.status_label.config(
+            text="Iniciando PC virtual..."
+        )
+
+        try:
+            self.process = subprocess.Popen(
+                command,
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    if os.name == "nt"
+                    else 0
+                )
+            )
+
+            self.status_label.config(
+                text="PC virtual iniciado."
+            )
+
+            self.start_button.config(
+                state="disabled"
+            )
+
+            self.root.after(
+                2000,
+                self.check_vm
+            )
+
+        except Exception as error:
+            messagebox.showerror(
+                "Erro ao iniciar",
+                f"Não foi possível iniciar o PC virtual:\n\n{error}"
+            )
+
+            self.status_label.config(
+                text="Erro ao iniciar."
+            )
+
+    # ---------------------------------------------------------
+    # MONITORAMENTO
+    # ---------------------------------------------------------
+
+    def check_vm(self):
+        if not self.process:
+            return
+
+        if self.process.poll() is None:
+            self.root.after(
+                2000,
+                self.check_vm
+            )
+        else:
+            self.status_label.config(
+                text="PC virtual desligado."
+            )
+
+            self.start_button.config(
+                state="normal"
+            )
+
+    # ---------------------------------------------------------
+    # FECHAR
+    # ---------------------------------------------------------
+
+    def close(self):
+        if self.process and self.process.poll() is None:
+            answer = messagebox.askyesno(
+                "Sair",
+                "A máquina virtual ainda está ligada. Fechar o launcher?"
+            )
+
+            if not answer:
+                return
+
+        self.root.destroy()
+
+
+def main():
+    root = tk.Tk()
+
+    try:
+        style = ttk.Style()
+
+        if "vista" in style.theme_names():
+            style.theme_use("vista")
+
+    except Exception:
+        pass
+
+    app = VirtualGamerPC(root)
+
+    root.protocol(
+        "WM_DELETE_WINDOW",
+        app.close
+    )
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+```
